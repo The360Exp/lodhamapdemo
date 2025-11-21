@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mumbai to Khopoli - 3D Interactive Map</title>
+    
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+    
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { overflow: hidden; background: #e0e0e0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+
+        /* --- GLASSMORPHISM UTILITY --- */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+            border-radius: 16px;
+        }
+
+        /* --- SIDEBAR --- */
+        .sidebar {
+            position: absolute; top: 20px; left: 20px; width: 300px;
+            max-height: calc(100vh - 40px); overflow-y: auto; z-index: 1000;
+            transition: transform 0.3s ease; scrollbar-width: none;
+        }
+        .sidebar::-webkit-scrollbar { display: none; }
+        
+        .sidebar-header { padding: 24px; border-bottom: 1px solid rgba(0,0,0,0.05); }
+        .sidebar-header h2 { font-size: 22px; font-weight: 700; color: #1a1a1a; margin-bottom: 4px; }
+        .sidebar-header p { font-size: 13px; color: #666; font-weight: 400; }
+
+        .toggle-container { padding: 20px 24px; border-bottom: 1px solid rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; }
+        .toggle-label { font-size: 14px; font-weight: 600; color: #444; }
+        .toggle { position: relative; width: 50px; height: 26px; background: rgba(0,0,0,0.1); border-radius: 30px; cursor: pointer; transition: background 0.3s; }
+        .toggle.active { background: #667eea; }
+        .toggle-slider { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: white; border-radius: 50%; transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .toggle.active .toggle-slider { transform: translateX(24px); }
+
+        .neighborhoods-list { padding: 15px; }
+        .neighborhoods-title { font-size: 12px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 10px 10px; }
+        
+        .neighborhood-item {
+            padding: 16px; margin-bottom: 10px; border-radius: 12px; cursor: pointer;
+            transition: all 0.2s ease; background: rgba(255,255,255,0.4); border: 1px solid transparent;
+        }
+        .neighborhood-item:hover { background: white; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .neighborhood-item.active { border-color: #667eea; background: rgba(102, 126, 234, 0.05); }
+        
+        .neighborhood-name { font-size: 15px; font-weight: 600; color: #2c3e50; }
+        .neighborhood-type { font-size: 12px; color: #667eea; font-weight: 500; margin-top: 2px; }
+
+        /* --- 3D MARKERS & POI LABELS --- */
+        .beacon-container {
+            width: 0; height: 0; 
+            position: relative;
+            display: flex; justify-content: center; align-items: center;
+            pointer-events: none; /* Allow clicks to pass through wrapper */
+            transition: opacity 1s ease;
+        }
+
+        .beacon-container.fade-out { opacity: 0; }
+
+        .beacon-pin {
+            width: 36px; height: 36px;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            position: absolute;
+            left: -18px; bottom: 0px;
+            z-index: 10;
+            display: flex; justify-content: center; align-items: center;
+            box-shadow: -4px 4px 10px rgba(0,0,0,0.2);
+            border: 3px solid white;
+            animation: floatPin 2s ease-in-out infinite;
+        }
+
+        .beacon-inner {
+            width: 10px; height: 10px;
+            background: white;
+            border-radius: 50%;
+            transform: rotate(45deg);
+            box-shadow: inset 0 0 4px rgba(0,0,0,0.2);
+        }
+
+        .beacon-shadow {
+            position: absolute; top: 0; left: 50%; transform: translate(-50%, -50%);
+            width: 16px; height: 6px; background: rgba(0,0,0,0.4);
+            border-radius: 50%; filter: blur(3px); animation: shadowPin 2s ease-in-out infinite;
+        }
+
+        /* POI LABEL STRUCTURE */
+        .poi-label-container {
+            position: absolute;
+            bottom: 55px; /* Fixed start position */
+            z-index: 20;
+            /* Transition for smooth repositioning on collision */
+            transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94); 
+        }
+
+        .poi-label-content {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #333;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            white-space: nowrap;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(0,0,0,0.1);
+            /* Only the content bobs up and down */
+            animation: floatLabel 2s ease-in-out infinite;
+        }
+
+        /* ONLY Pin & Shadow are animated */
+        @keyframes floatPin { 0%, 100% { bottom: 0px; } 50% { bottom: 12px; } }
+        @keyframes shadowPin { 0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.4; } 50% { transform: translate(-50%, -50%) scale(0.6); opacity: 0.2; } }
+        @keyframes floatLabel { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+
+        /* --- ROUTE INFO CARD --- */
+        .route-info-card {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(150%);
+            width: 90%; max-width: 500px; padding: 24px; z-index: 1000;
+            transition: transform 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+        }
+        .route-info-card.visible { transform: translateX(-50%) translateY(0); }
+        .route-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+        .route-points { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #555; font-weight: 500; }
+        .arrow { color: #888; }
+        .route-stats { display: flex; justify-content: space-between; align-items: flex-end; }
+        .stat-group { display: flex; flex-direction: column; }
+        .stat-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+        .stat-value { font-size: 32px; font-weight: 700; color: #333; letter-spacing: -1px; line-height: 1; }
+        .stat-sub { font-size: 14px; color: #666; margin-left: 4px; }
+        .drive-icon { font-size: 24px; }
+
+        /* --- UI CONTROLS --- */
+        .customize-btn {
+            position: absolute; top: 20px; left: 340px; padding: 12px 20px; cursor: pointer;
+            z-index: 1000; font-weight: 600; color: #333; display: flex; align-items: center; gap: 8px; transition: all 0.2s;
+        }
+        .customize-btn:hover { transform: translateY(-2px); background: rgba(255, 255, 255, 0.9); }
+        
+        .color-popup {
+            display: none; position: absolute; top: 70px; left: 340px; width: 280px; padding: 20px; z-index: 1001; transform-origin: top left;
+        }
+        .color-popup.active { display: block; animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .control-group { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+        .control-group label { font-size: 13px; color: #555; font-weight: 500; }
+        input[type="color"] { border: none; width: 40px; height: 25px; cursor: pointer; background: none; border-radius: 6px; }
+
+        @keyframes popIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        .mapboxgl-ctrl-top-right { top: 20px; right: 20px; }
+        
+        .loading {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #f0f0f0;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 2000; transition: opacity 0.5s;
+        }
+        .spinner { width: 40px; height: 40px; border: 3px solid rgba(102, 126, 234, 0.1); border-top: 3px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        
+        @media (max-width: 768px) {
+            .sidebar { width: 260px; left: 10px; top: 10px; }
+            .customize-btn { display: none; }
+            .route-info-card { width: 95%; bottom: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <p style="color: #666; font-size: 14px; font-weight: 500;">Initializing 3D Map...</p>
+    </div>
+    
+    <div id="map"></div>
+    
+    <div class="sidebar glass-panel">
+        <div class="sidebar-header">
+            <h2>Mumbai 3D</h2>
+            <p>Interactive Route Planner</p>
+        </div>
+        
+        <div class="toggle-container">
+            <span class="toggle-label" id="modeText">Day Mode</span>
+            <div class="toggle" id="dayNightToggle">
+                <div class="toggle-slider"></div>
+            </div>
+        </div>
+        
+        <div class="neighborhoods-list">
+            <div class="neighborhoods-title">Select Start Location</div>
+            <div id="neighborhoodsList"></div>
+        </div>
+
+        <div class="neighborhoods-list" style="border-top: 1px solid rgba(0,0,0,0.05); margin-top: 10px;">
+            <div class="neighborhoods-title">Destination Guide</div>
+            <div class="neighborhood-item" id="poiBtn">
+                <div class="neighborhood-name">📍 Explore Khopoli</div>
+                <div class="neighborhood-type">Hotels & Attractions</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="customize-btn glass-panel" id="customizeBtn">
+        <span>🎨 Theme</span>
+    </div>
+
+    <div class="color-popup glass-panel" id="colorPopup">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+            <h3 style="font-size: 14px; color: #333;">Color Studio</h3>
+            <span id="closePopup" style="cursor: pointer; color: #999;">&times;</span>
+        </div>
+        
+        <div class="control-group"><label>Land</label><input type="color" id="colorLand" value="#f4f4f4"></div>
+        <div class="control-group"><label>Water</label><input type="color" id="colorWater" value="#cce0ff"></div>
+        <div class="control-group"><label>Roads</label><input type="color" id="colorRoads" value="#ffffff"></div>
+        <div class="control-group"><label>Parks</label><input type="color" id="colorParks" value="#dbeebb"></div>
+        <div class="control-group"><label>Route Path</label><input type="color" id="colorPath" value="#ffaf7a"></div>
+        <hr style="border: 0; border-top: 1px solid rgba(0,0,0,0.1); margin: 10px 0;">
+        <div class="control-group"><label>Buildings (Base)</label><input type="color" id="colorBuildBase" value="#e0e0e0"></div>
+        <div class="control-group"><label>Buildings (Top)</label><input type="color" id="colorBuildTop" value="#667eea"></div>
+    </div>
+
+    <div class="route-info-card glass-panel" id="routeCard">
+        <div class="route-header">
+            <div class="route-points">
+                <span id="startPointName">Mumbai</span>
+                <span class="arrow">➝</span>
+                <span style="color: #333; font-weight: 700;">Khopoli</span>
+            </div>
+            <div class="drive-icon">🚗</div>
+        </div>
+        <div class="route-stats">
+            <div class="stat-group">
+                <span class="stat-label">Estimated Time</span>
+                <div>
+                    <span class="stat-value" id="routeTime">--</span>
+                    <span class="stat-sub">hr min</span>
+                </div>
+            </div>
+            <div class="stat-group" style="text-align: right;">
+                <span class="stat-label">Distance</span>
+                <div>
+                    <span class="stat-value" id="routeDist">--</span>
+                    <span class="stat-sub">km</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // --- CONFIGURATION ---
+        const config = {
+            token: 'pk.eyJ1IjoiZ2V0dGFmaXgiLCJhIjoiY21oY2VwbnluMGNvaTJpc2F6Y2dpOGY3byJ9.uMBGrFK6tuXuSfflIN5JOQ',
+            khopoliCoords: [73.3439, 18.7852] // End Destination
+        };
+
+        const neighborhoods = [
+            { name: "Lodha Park", type: "Worli", coords: [72.8272, 19.0067] },
+            { name: "Lodha World Towers", type: "Upper Worli", coords: [72.8270, 19.0024] },
+            { name: "Breach Candy", type: "South Mumbai", coords: [72.8048, 18.9719] },
+            { name: "Malabar Hill", type: "Heritage", coords: [72.8055, 18.9548] },
+            { name: "Marine Drive", type: "Promenade", coords: [72.8235, 18.9437] },
+            { name: "Gateway of India", type: "Colaba", coords: [72.8347, 18.9220] },
+            { name: "Trident Hotel", type: "Nariman Point", coords: [72.8205, 18.9275] }
+        ];
+
+        const khopoliPOIs = [
+            { name: "Imagicaa", coords: [73.2844, 18.7652] },
+            { name: "Novotel Imagicaa", coords: [73.2830, 18.7660] },
+            { name: "Radisson Blu Karjat", coords: [73.3345, 18.8450] },
+            { name: "The Tranquil Resort", coords: [73.3220, 18.7890] },
+            { name: "Della Resorts", coords: [73.4056, 18.7797] }
+        ];
+
+        let map;
+        let isDarkMode = false;
+        let activeMarkers = []; // Tracks route/POI markers (array of objects: {marker, coords, element, labelContainer})
+        let focusMarker = null; // Tracks the temporary neighborhood marker
+        
+        const styles = {
+            day: 'mapbox://styles/mapbox/light-v11',
+            night: 'mapbox://styles/mapbox/dark-v11'
+        };
+
+        const defaults = {
+            day: { land: '#f4f4f4', water: '#cce0ff', roads: '#ffffff', parks: '#dbeebb', buildBase: '#e0e0e0', buildTop: '#667eea', path: '#ffaf7a' },
+            night: { land: '#1a1a1a', water: '#0f172a', roads: '#333333', parks: '#1e2925', buildBase: '#334155', buildTop: '#64748b', path: '#f97316' }
+        };
+
+        mapboxgl.accessToken = config.token;
+
+        function initMap() {
+            try {
+                map = new mapboxgl.Map({
+                    container: 'map',
+                    style: styles.day,
+                    center: [72.8258, 18.9388],
+                    zoom: 13,
+                    pitch: 60,
+                    bearing: -15,
+                    antialias: true
+                });
+
+                map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+
+                map.on('load', () => {
+                    document.getElementById('loading').style.opacity = 0;
+                    setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
+                    
+                    // --- ADD 3D TERRAIN ---
+                    map.addSource('mapbox-dem', {
+                        'type': 'raster-dem',
+                        'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+                        'tileSize': 512,
+                        'maxzoom': 14
+                    });
+                    // Add exclamation to make hills prominent
+                    map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 });
+
+                     // --- ADD HILLSHADE LAYER FOR CLARITY ---
+                     map.addLayer({
+                        'id': 'hillshading',
+                        'source': 'mapbox-dem',
+                        'type': 'hillshade',
+                        'paint': {
+                            'hillshade-exaggeration': 0.5,
+                            'hillshade-shadow-color': '#000000',
+                            'hillshade-highlight-color': '#ffffff',
+                            'hillshade-accent-color': '#000000'
+                        },
+                        'layout': { 'visibility': 'visible' }
+                    }, 'waterway-label'); // Place below labels
+
+                    // --- UPDATED BEAUTIFUL SKY ---
+                    map.addLayer({
+                        'id': 'sky',
+                        'type': 'sky',
+                        'paint': {
+                            'sky-type': 'atmosphere',
+                            // Deep blue zenith, warm yellow horizon (sun)
+                            'sky-atmosphere-color': '#2672a8', 
+                            'sky-horizon-color': '#fce570',
+                            'sky-fog-color': 'rgba(255, 255, 255, 0.8)',
+                            // Sun position for bright daylight
+                            'sky-atmosphere-sun': [0.0, 90.0], 
+                            'sky-atmosphere-sun-intensity': 5
+                        }
+                    });
+
+                    add3DBuildings();
+                    setPopupColors(defaults.day);
+                    setTimeout(updateGlobalTheme, 500);
+                });
+
+                // Listen for map movement to check collisions
+                map.on('move', checkLabelCollisions);
+                map.on('zoom', checkLabelCollisions);
+
+                setupUI();
+                createList();
+
+            } catch (e) {
+                console.error(e);
+                alert("Error loading map");
+            }
+        }
+
+        // --- COLLISION DETECTION & REPOSITIONING LOGIC ---
+        function checkLabelCollisions() {
+            // Only check active markers that have labels
+            const targets = activeMarkers.filter(m => m.labelContainer);
+            if (targets.length < 2) return;
+
+            // Reset transforms first
+            targets.forEach(t => {
+                t.labelContainer.style.transform = `translate(0px, 0px)`;
+            });
+
+            // Get screen positions for all markers
+            const positions = targets.map(t => {
+                const pos = map.project(t.coords); // Get pixel coordinates
+                return { ...t, x: pos.x, y: pos.y };
+            });
+
+            // Check pairs
+            for (let i = 0; i < positions.length; i++) {
+                for (let j = i + 1; j < positions.length; j++) {
+                    const a = positions[i];
+                    const b = positions[j];
+                    
+                    // Bounding box approx for label center point relative to marker
+                    // Label is roughly at (x, y-55). 
+                    const ax = a.x; const ay = a.y - 55;
+                    const bx = b.x; const by = b.y - 55;
+
+                    const dist = Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2));
+                    
+                    // Threshold for collision (approx label width/height combo)
+                    if (dist < 90) {
+                        // Calculate vector from center of pair towards the marker
+                        // Vector V = MarkerA - MarkerB
+                        const vx = a.x - b.x;
+                        const vy = a.y - b.y;
+                        
+                        // Normalize vector
+                        const len = Math.sqrt(vx*vx + vy*vy) || 1;
+                        const nx = vx / len;
+                        const ny = vy / len;
+                        
+                        // Calculate push amount based on overlap intensity
+                        const push = (100 - dist) * 0.6; 
+
+                        // Apply translation along the vector
+                        if (a.labelContainer) a.labelContainer.style.transform = `translate(${nx * push}px, ${ny * push}px)`;
+                        if (b.labelContainer) b.labelContainer.style.transform = `translate(${-nx * push}px, ${-ny * push}px)`;
+                    }
+                }
+            }
+        }
+
+        // --- ACTION: SELECT START LOCATION ---
+        async function handleLocationSelect(location) {
+            clearMarkers();
+            if (focusMarker) { focusMarker.marker.remove(); focusMarker = null; }
+            document.querySelectorAll('.neighborhood-item').forEach(el => el.classList.remove('active'));
+            
+            focusMarker = createLabelledMarker(location.coords, location.name, 'linear-gradient(135deg, #00f260, #0575e6)');
+            
+            map.flyTo({
+                center: location.coords,
+                zoom: 16.2, 
+                pitch: 65,
+                bearing: 0,
+                duration: 2000,
+                essential: true
+            });
+
+            document.getElementById('routeCard').classList.remove('visible');
+            
+            await new Promise(resolve => setTimeout(resolve, 4000));
+            
+            getRouteToKhopoli(location);
+        }
+
+        // --- ACTION: EXPLORE KHOPOLI ---
+        function handleExploreKhopoli() {
+            clearMarkers();
+            if (focusMarker) { focusMarker.marker.remove(); focusMarker = null; }
+            document.querySelectorAll('.neighborhood-item').forEach(el => el.classList.remove('active'));
+            document.getElementById('poiBtn').classList.add('active');
+            document.getElementById('routeCard').classList.remove('visible');
+            
+            if(map.getSource('route')) map.getSource('route').setData({type: 'FeatureCollection', features: []});
+
+            const bounds = new mapboxgl.LngLatBounds();
+
+            // Khopoli Hero
+            const kData = createMarkerElement("Khopoli", "linear-gradient(135deg, #667eea 0%, #764ba2 100%)");
+            const kMarker = new mapboxgl.Marker({ element: kData.element, offset: [0, -24] })
+                .setLngLat(config.khopoliCoords)
+                .addTo(map);
+            activeMarkers.push({ marker: kMarker, coords: config.khopoliCoords, labelContainer: kData.labelContainer });
+            bounds.extend(config.khopoliCoords);
+
+            // POIs
+            khopoliPOIs.forEach(poi => {
+                const data = createMarkerElement(poi.name, "linear-gradient(135deg, #f6d365 0%, #fda085 100%)");
+                const marker = new mapboxgl.Marker({ element: data.element, offset: [0, -24] })
+                    .setLngLat(poi.coords)
+                    .addTo(map);
+                activeMarkers.push({ marker: marker, coords: poi.coords, labelContainer: data.labelContainer });
+                bounds.extend(poi.coords);
+            });
+
+            map.fitBounds(bounds, {
+                padding: {top: 100, bottom: 100, left: 350, right: 100},
+                pitch: 55, // Increased pitch to see the new terrain better
+                duration: 2500
+            });
+            
+            // Trigger check
+            map.once('moveend', checkLabelCollisions);
+        }
+
+        // Create DOM Elements and return references
+        function createMarkerElement(text, gradient) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'beacon-container';
+            
+            // Container for the label (Moved by JS for collision)
+            const labelContainer = document.createElement('div');
+            labelContainer.className = 'poi-label-container';
+            
+            // Content for the label (Animated by CSS for bobbing)
+            const labelContent = document.createElement('div');
+            labelContent.className = 'poi-label-content';
+            labelContent.innerText = text;
+            
+            labelContainer.appendChild(labelContent);
+            
+            const pin = document.createElement('div');
+            pin.className = 'beacon-pin';
+            pin.style.background = gradient;
+            pin.innerHTML = `<div class="beacon-inner"></div>`;
+            
+            const shadow = document.createElement('div');
+            shadow.className = 'beacon-shadow';
+
+            wrapper.appendChild(labelContainer);
+            wrapper.appendChild(pin);
+            wrapper.appendChild(shadow);
+            
+            return { element: wrapper, labelContainer: labelContainer };
+        }
+        
+        function createLabelledMarker(coords, text, gradient) {
+            const data = createMarkerElement(text, gradient);
+            const marker = new mapboxgl.Marker({ element: data.element, offset: [0, -24] })
+                .setLngLat(coords)
+                .addTo(map);
+            return { marker: marker, element: data.element };
+        }
+
+        function clearMarkers() {
+            activeMarkers.forEach(m => m.marker.remove());
+            activeMarkers = [];
+        }
+
+        async function getRouteToKhopoli(startLoc) {
+            const start = startLoc.coords;
+            const end = config.khopoliCoords;
+            const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start[0]},${start[1]};${end[0]},${end[1]}?geometries=geojson&access_token=${config.token}`;
+
+            try {
+                const query = await fetch(url);
+                const json = await query.json();
+                const data = json.routes[0];
+                const route = data.geometry.coordinates;
+
+                drawRouteLayer(data.geometry);
+                
+                if (focusMarker) {
+                    focusMarker.element.classList.add('fade-out');
+                    setTimeout(() => { if(focusMarker) { focusMarker.marker.remove(); focusMarker = null; } }, 1000);
+                }
+
+                addRouteMarkers(start, end);
+
+                const timeSecs = data.duration;
+                const distMeters = data.distance;
+                const hours = Math.floor(timeSecs / 3600);
+                const minutes = Math.floor((timeSecs % 3600) / 60);
+                document.getElementById('routeTime').innerText = `${hours}:${minutes < 10 ? '0' : ''}${minutes}`;
+                document.getElementById('routeDist').innerText = (distMeters / 1000).toFixed(1);
+                document.getElementById('startPointName').innerText = startLoc.name;
+
+                document.getElementById('routeCard').classList.add('visible');
+
+                const bounds = new mapboxgl.LngLatBounds(start, start);
+                route.forEach(coord => bounds.extend(coord));
+                map.fitBounds(bounds, {
+                    padding: {top: 100, bottom: 250, left: 100, right: 350},
+                    pitch: 50,
+                    duration: 3000
+                });
+
+            } catch (err) {
+                console.error("Route Error", err);
+            }
+        }
+
+        function drawRouteLayer(geojson) {
+            const c = getPopupColors();
+            if (map.getSource('route')) {
+                map.getSource('route').setData(geojson);
+            } else {
+                map.addLayer({
+                    id: 'route',
+                    type: 'line',
+                    source: {
+                        type: 'geojson',
+                        data: { type: 'Feature', properties: {}, geometry: geojson }
+                    },
+                    layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: { 'line-color': c.path, 'line-width': 8, 'line-opacity': 0.9 }
+                });
+            }
+        }
+        
+        function addRouteMarkers(start, end) {
+            clearMarkers(); 
+
+            const createPin = (gradient) => {
+                const el = document.createElement('div');
+                el.className = 'beacon-container';
+                el.innerHTML = `
+                    <div class="beacon-pin" style="background: ${gradient}">
+                        <div class="beacon-inner"></div>
+                    </div>
+                    <div class="beacon-shadow"></div>
+                `;
+                return el;
+            };
+
+            const startMarker = new mapboxgl.Marker({ 
+                element: createPin('linear-gradient(135deg, #00f260, #0575e6)'),
+                offset: [0, -24] 
+            }).setLngLat(start).addTo(map);
+
+            const endMarker = new mapboxgl.Marker({ 
+                element: createPin('linear-gradient(135deg, #ff0844, #ffb199)'),
+                offset: [0, -24] 
+            }).setLngLat(end).addTo(map);
+
+            activeMarkers.push({ marker: startMarker, coords: start });
+            activeMarkers.push({ marker: endMarker, coords: end });
+        }
+
+        function add3DBuildings() {
+            const layers = map.getStyle().layers;
+            const labelLayerId = layers.find(l => l.type === 'symbol' && l.layout['text-field'])?.id;
+            const c = getPopupColors();
+
+            if (!map.getLayer('3d-buildings')) {
+                map.addLayer({
+                    'id': '3d-buildings',
+                    'source': 'composite',
+                    'source-layer': 'building',
+                    'filter': ['==', 'extrude', 'true'],
+                    'type': 'fill-extrusion',
+                    'minzoom': 15,
+                    'paint': {
+                        'fill-extrusion-color': ['interpolate', ['linear'], ['get', 'height'], 0, c.buildBase, 200, c.buildTop],
+                        'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'height']],
+                        'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'min_height']],
+                        'fill-extrusion-opacity': 0.9
+                    }
+                }, labelLayerId);
+            }
+        }
+
+        function updateGlobalTheme() {
+            if (!map) return;
+            const c = getPopupColors();
+
+            // Update Sky based on mode
+            if (map.getLayer('sky')) {
+                map.setPaintProperty('sky', 'sky-atmosphere-color', isDarkMode ? '#0f172a' : '#2672a8');
+                map.setPaintProperty('sky', 'sky-horizon-color', isDarkMode ? '#1e293b' : '#fce570');
+                map.setPaintProperty('sky', 'sky-fog-color', isDarkMode ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.8)');
+                 // Move sun below horizon for night mode
+                map.setPaintProperty('sky', 'sky-atmosphere-sun', isDarkMode ? [0.0, -90.0] : [0.0, 90.0]);
+            }
+
+            // Adjust Hillshading intensity for night mode so it's not too bright
+             if (map.getLayer('hillshading')) {
+                map.setPaintProperty('hillshading', 'hillshade-highlight-color', isDarkMode ? '#555555' : '#ffffff');
+                map.setPaintProperty('hillshading', 'hillshade-shadow-color', isDarkMode ? '#000000' : '#000000');
+            }
+
+
+            if (map.getLayer('3d-buildings')) {
+                map.setPaintProperty('3d-buildings', 'fill-extrusion-color', ['interpolate', ['linear'], ['get', 'height'], 0, c.buildBase, 200, c.buildTop]);
+            }
+            if (map.getLayer('route')) {
+                map.setPaintProperty('route', 'line-color', c.path);
+            }
+
+            const layers = map.getStyle().layers;
+            for (const layer of layers) {
+                if (layer.id.includes('water') && layer.type === 'fill') map.setPaintProperty(layer.id, 'fill-color', c.water);
+                if (layer.type === 'background') map.setPaintProperty(layer.id, 'background-color', c.land);
+                if (layer.id.includes('road') && layer.type === 'line') {
+                    try { map.setPaintProperty(layer.id, 'line-color', c.roads); } catch(e){}
+                }
+                if (layer.id.includes('landuse') && layer.type === 'fill') {
+                    try { map.setPaintProperty(layer.id, 'fill-color', c.parks); } catch(e){}
+                }
+
+                // TOTAL ROAD NAME REMOVAL & CLUTTER CLEANUP
+                if (layer.type === 'symbol') {
+                    if (layer['source-layer'] === 'road') {
+                        map.setLayoutProperty(layer.id, 'visibility', 'none');
+                    }
+                    if (layer['source-layer'] === 'place') {
+                         map.setLayoutProperty(layer.id, 'visibility', 'none');
+                    }
+                    if (layer['source-layer'] === 'poi') {
+                        map.setLayoutProperty(layer.id, 'visibility', 'none');
+                    }
+                }
+            }
+        }
+
+        function createList() {
+            const container = document.getElementById('neighborhoodsList');
+            neighborhoods.forEach(n => {
+                const item = document.createElement('div');
+                item.className = 'neighborhood-item';
+                item.innerHTML = `<div class="neighborhood-name">${n.name}</div><div class="neighborhood-type">${n.type}</div>`;
+                
+                const handleClick = () => {
+                    document.querySelectorAll('.neighborhood-item').forEach(i => i.classList.remove('active'));
+                    document.getElementById('poiBtn').classList.remove('active');
+                    item.classList.add('active');
+                    handleLocationSelect(n);
+                };
+                item.onclick = handleClick;
+                container.appendChild(item);
+            });
+
+            document.getElementById('poiBtn').onclick = handleExploreKhopoli;
+        }
+
+        function setupUI() {
+            document.getElementById('customizeBtn').onclick = () => document.getElementById('colorPopup').classList.add('active');
+            document.getElementById('closePopup').onclick = () => document.getElementById('colorPopup').classList.remove('active');
+            
+            document.querySelectorAll('input[type="color"]').forEach(input => {
+                input.addEventListener('input', updateGlobalTheme);
+            });
+
+            document.getElementById('dayNightToggle').onclick = function() {
+                isDarkMode = !isDarkMode;
+                this.classList.toggle('active');
+                const theme = isDarkMode ? 'night' : 'day';
+                document.getElementById('modeText').innerText = isDarkMode ? 'Night Mode' : 'Day Mode';
+                map.setStyle(styles[theme]);
+                setPopupColors(defaults[theme]);
+                map.once('styledata', () => {
+                    add3DBuildings();
+                    setTimeout(updateGlobalTheme, 300);
+                });
+            };
+        }
+
+        function getPopupColors() {
+            return {
+                land: document.getElementById('colorLand').value,
+                water: document.getElementById('colorWater').value,
+                roads: document.getElementById('colorRoads').value,
+                parks: document.getElementById('colorParks').value,
+                buildBase: document.getElementById('colorBuildBase').value,
+                buildTop: document.getElementById('colorBuildTop').value,
+                path: document.getElementById('colorPath').value
+            };
+        }
+
+        function setPopupColors(c) {
+            document.getElementById('colorLand').value = c.land;
+            document.getElementById('colorWater').value = c.water;
+            document.getElementById('colorRoads').value = c.roads;
+            document.getElementById('colorParks').value = c.parks;
+            document.getElementById('colorBuildBase').value = c.buildBase;
+            document.getElementById('colorBuildTop').value = c.buildTop;
+            document.getElementById('colorPath').value = c.path;
+        }
+
+        initMap();
+    </script>
+</body>
+</html>
